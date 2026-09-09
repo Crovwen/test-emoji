@@ -1,11 +1,10 @@
 import os
-import time
 import requests
-from flask import Flask
+from flask import Flask, request
 
 app = Flask(__name__)
 
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.environ["BOT_TOKEN"]
 
 EMOJIS = [
     ("24h", "5803392202998551545"),
@@ -23,26 +22,24 @@ EMOJIS = [
 ]
 
 
-def send_emojis(chat_id):
+def send_test(chat_id):
     text = ""
     entities = []
 
     for name, emoji_id in EMOJIS:
-        prefix = f"{name}: "
+        prefix = name + ": "
         start = len(text.encode("utf-16-le")) // 2
 
         text += prefix + "⬜\n"
 
-        emoji_offset = start + len(prefix.encode("utf-16-le")) // 2
-
         entities.append({
             "type": "custom_emoji",
-            "offset": emoji_offset,
+            "offset": start + len(prefix.encode("utf-16-le")) // 2,
             "length": 1,
             "custom_emoji_id": emoji_id
         })
 
-    requests.post(
+    r = requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={
             "chat_id": chat_id,
@@ -52,54 +49,48 @@ def send_emojis(chat_id):
         timeout=30
     )
 
-
-def bot_loop():
-    offset = 0
-
-    while True:
-        try:
-            response = requests.get(
-                f"https://api.telegram.org/bot{TOKEN}/getUpdates",
-                params={
-                    "offset": offset,
-                    "timeout": 30
-                },
-                timeout=40
-            )
-
-            updates = response.json().get("result", [])
-
-            for update in updates:
-                offset = update["update_id"] + 1
-
-                message = update.get("message", {})
-                text = message.get("text", "")
-                chat_id = message.get("chat", {}).get("id")
-
-                if text == "/start" and chat_id:
-                    send_emojis(chat_id)
-
-        except Exception as e:
-            print("Error:", e)
-            time.sleep(5)
+    print(r.text)
 
 
-@app.route("/")
-def home():
-    return "Bot is running"
+@app.route("/", methods=["GET"])
+def index():
+    return "OK"
+
+
+@app.route("/telegram", methods=["POST"])
+def telegram():
+    update = request.json or {}
+
+    message = update.get("message", {})
+    text = message.get("text", "")
+    chat = message.get("chat", {})
+
+    if text == "/start" and chat.get("id"):
+        send_test(chat["id"])
+
+    return "OK"
+
+
+def setup_webhook():
+    url = os.environ.get("RENDER_EXTERNAL_URL")
+
+    if not url:
+        print("RENDER_EXTERNAL_URL not found")
+        return
+
+    webhook = url + "/telegram"
+
+    r = requests.post(
+        f"https://api.telegram.org/bot{TOKEN}/setWebhook",
+        json={"url": webhook},
+        timeout=30
+    )
+
+    print("Webhook:", r.text)
 
 
 if __name__ == "__main__":
-    import threading
+    setup_webhook()
 
     port = int(os.environ.get("PORT", 10000))
-
-    threading.Thread(
-        target=bot_loop,
-        daemon=True
-    ).start()
-
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )    
+    app.run(host="0.0.0.0", port=port)
