@@ -1,11 +1,11 @@
 import os
+import time
 import requests
 from flask import Flask
 
 app = Flask(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = 5095867558
 
 EMOJIS = [
     ("24h", "5803392202998551545"),
@@ -23,25 +23,17 @@ EMOJIS = [
 ]
 
 
-@app.route("/")
-def home():
-    return "Bot is running!"
-
-
-@app.route("/test")
-def test():
-    if not TOKEN:
-        return "BOT_TOKEN is not set"
-
+def send_emojis(chat_id):
     text = ""
     entities = []
 
     for name, emoji_id in EMOJIS:
-        text += f"{name}: ⬜\n"
+        prefix = f"{name}: "
+        start = len(text.encode("utf-16-le")) // 2
 
-        # Telegram offsets are UTF-16
-        offset = len(text[:-2].encode("utf-16-le")) // 2
-        emoji_offset = offset + len(f"{name}: ".encode("utf-16-le")) // 2
+        text += prefix + "⬜\n"
+
+        emoji_offset = start + len(prefix.encode("utf-16-le")) // 2
 
         entities.append({
             "type": "custom_emoji",
@@ -50,19 +42,64 @@ def test():
             "custom_emoji_id": emoji_id
         })
 
-    response = requests.post(
+    requests.post(
         f"https://api.telegram.org/bot{TOKEN}/sendMessage",
         json={
-            "chat_id": CHAT_ID,
+            "chat_id": chat_id,
             "text": text,
             "entities": entities
         },
         timeout=30
     )
 
-    return response.text
+
+def bot_loop():
+    offset = 0
+
+    while True:
+        try:
+            response = requests.get(
+                f"https://api.telegram.org/bot{TOKEN}/getUpdates",
+                params={
+                    "offset": offset,
+                    "timeout": 30
+                },
+                timeout=40
+            )
+
+            updates = response.json().get("result", [])
+
+            for update in updates:
+                offset = update["update_id"] + 1
+
+                message = update.get("message", {})
+                text = message.get("text", "")
+                chat_id = message.get("chat", {}).get("id")
+
+                if text == "/start" and chat_id:
+                    send_emojis(chat_id)
+
+        except Exception as e:
+            print("Error:", e)
+            time.sleep(5)
+
+
+@app.route("/")
+def home():
+    return "Bot is running"
 
 
 if __name__ == "__main__":
+    import threading
+
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+
+    threading.Thread(
+        target=bot_loop,
+        daemon=True
+    ).start()
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )    
